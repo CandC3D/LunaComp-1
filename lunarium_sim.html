@@ -3,6 +3,20 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- Security headers (defence-in-depth for public hosting) -->
+<!-- Note: unsafe-inline for script-src is required while JS remains inline.
+     Extract scripts to a separate .js file with a nonce/hash to remove it. -->
+<meta http-equiv="Content-Security-Policy"
+  content="default-src 'none';
+           style-src  'self' 'unsafe-inline' https://fonts.googleapis.com;
+           font-src   https://fonts.gstatic.com;
+           script-src 'self' 'unsafe-inline';
+           img-src    'self' data:;
+           connect-src 'none';
+           base-uri   'self';
+           form-action 'self';
+           frame-ancestors 'none';">
+<meta name="referrer" content="no-referrer">
 <title>Lunarium v2.7.4 · Simulator</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700&display=swap');
@@ -158,7 +172,8 @@ body{
 }
 
 .tmrw-row{
-  display:flex; align-items:center; gap:6px;
+  display:flex; align-items:center; justify-content:space-between;
+  padding:2px 20px 0;
 }
 .t-led{
   width:10px; height:10px; border-radius:50%; flex-shrink:0;
@@ -170,7 +185,7 @@ body{
 .t-id{font-size:8px; color:var(--silk-d); letter-spacing:1px; flex-shrink:0;}
 .t-msg{
   flex:1; text-align:center;
-  font-size:6.5px; color:rgba(30,50,104,.9);
+  font-size:6.5px; color:var(--silk-d);
   letter-spacing:1.5px; text-transform:uppercase;
 }
 
@@ -206,6 +221,33 @@ body{
   writing-mode:vertical-rl; transform:rotate(180deg);
 }
 
+/* ── Beat LED centred row (new panel layout) ── */
+.beat-row{
+  display:flex; align-items:center; justify-content:center;
+  gap:6px; padding:3px 0 2px;
+}
+.beat-row-lbl{
+  font-size:7.5px; color:var(--silk-lo); letter-spacing:2px;
+  text-transform:uppercase;
+}
+
+/* ── TIME|DATE label above mode LEDs ── */
+.time-date-row{
+  display:flex; justify-content:flex-start;
+  padding-left:0px; margin-bottom:2px;
+}
+.time-date-lbl{
+  font-size:7px; color:var(--silk-d); letter-spacing:1.5px;
+  text-transform:uppercase; white-space:nowrap;
+}
+
+/* ── Tomorrow caption below displays ── */
+.tmrw-caption{
+  text-align:center; font-size:6.5px; color:var(--silk-d);
+  letter-spacing:2px; text-transform:uppercase;
+  margin-top:2px;
+}
+
 .hr-label{
   font-size:8px; letter-spacing:4px; color:var(--silk-d);
   text-transform:uppercase; text-align:center;
@@ -222,10 +264,12 @@ body{
   margin-top:14px;
 }
 .brand-name{
-  font-family:'Orbitron',monospace; font-size:15px; font-weight:700;
-  color:var(--silk); letter-spacing:1px; line-height:1;
+  font-family:'Orbitron',monospace; font-size:18px; font-weight:700;
+  color:var(--silk); letter-spacing:0.5px; line-height:1;
+  text-shadow:0 0 18px rgba(180,210,255,.18);
 }
-.brand-sub{font-size:6.5px; color:var(--silk-lo); letter-spacing:2px; text-transform:uppercase; margin-top:3px;}
+.brand-sub{font-size:6.5px; color:var(--silk-lo); letter-spacing:2px; text-transform:uppercase; margin-top:4px;}
+.brand-lc{font-size:8px; color:rgba(200,216,240,0.45); letter-spacing:3px; text-transform:uppercase; margin-top:1px;}
 
 .btns{flex:1; display:flex; align-items:center; justify-content:center; gap:13px;}
 .btn-w{display:flex; flex-direction:column; align-items:center; gap:5px;}
@@ -291,6 +335,32 @@ body{
 .apply-btn:hover{background:#1e3a6e; color:var(--silk);}
 .hidden{display:none!important;}
 .kbd-hint{font-size:6.5px; color:rgba(200,216,240,0.22); letter-spacing:1.5px; margin-left:auto;}
+
+/* ── Collapsible diagnostic area ── */
+.diag-toggle{
+  position:relative; z-index:2;
+  display:flex; align-items:center; justify-content:center; gap:7px;
+  padding:5px 22px;
+  border-top:1px solid var(--navy-b);
+  background:var(--navy-d);
+  cursor:pointer; user-select:none;
+  transition:background .15s;
+}
+.diag-toggle:hover{background:var(--navy-l);}
+.diag-toggle-lbl{font-size:7px; letter-spacing:2.5px; text-transform:uppercase; color:var(--silk-lo);}
+.diag-toggle-chevron{
+  font-size:9px; color:var(--silk-lo);
+  transition:transform .25s ease;
+  display:inline-block;
+}
+.diag-toggle-chevron.open{transform:rotate(0deg);}
+.diag-toggle-chevron.closed{transform:rotate(-90deg);}
+#diagArea{
+  overflow:hidden;
+  max-height:400px; /* tall enough for 3 stat rows + ctrl-strip */
+  transition:max-height .3s ease;
+}
+#diagArea.collapsed{max-height:0;}
 </style>
 </head>
 <body>
@@ -318,32 +388,32 @@ body{
            LED0 alone = Moonrise|Set · LED1 alone = Age|%Illum.
            Both on    = Angle|Zodiac · Neither    = Time|Date (default) -->
       <div class="mode-cluster">
+        <div class="time-date-row">
+          <span class="time-date-lbl">Time&thinsp;|&thinsp;Date &#8212;&#9508;</span>
+        </div>
         <div class="mode-row">
           <div class="mode-labels left">
             <div class="mled-lbl">Moonrise|Set</div>
           </div>
           <div class="m-led" id="led0"></div>
           <div class="conn-center">
-            <div class="conn-both-lbl">both · Angle|Zodiac</div>
+            <div class="conn-both-lbl">Angle&thinsp;|&thinsp;Zodiac</div>
             <div class="conn-h"></div>
           </div>
           <div class="m-led" id="led1"></div>
           <div class="mode-labels right">
-            <div class="mled-lbl">Age|%Illum.</div>
+            <div class="mled-lbl">Age|%&thinsp;Illum.</div>
           </div>
         </div>
       </div>
 
-      <!-- LED2 (A) and LED3 (B) — tomorrow indicators -->
-      <div class="tmrw-row">
-        <span class="t-id">A</span>
-        <div class="t-led" id="led2"></div>
-        <span class="t-msg">── Lit if time is tomorrow ──</span>
-        <div class="t-led" id="led3"></div>
-        <span class="t-id">B</span>
+      <!-- Beat LED — centred row between mode cluster and displays -->
+      <div class="beat-row">
+        <div id="beatLed"></div>
+        <span class="beat-row-lbl">Beat</span>
       </div>
 
-      <!-- Display row: A, B, beat LED -->
+      <!-- Display row: A and B -->
       <div class="disp-row">
         <div class="disp-hsng" id="hsnA">
           <span class="disp-id">A</span>
@@ -353,10 +423,13 @@ body{
           <span class="disp-id">B</span>
           <svg id="dispB" xmlns="http://www.w3.org/2000/svg"></svg>
         </div>
-        <div class="beat-col">
-          <div id="beatLed"></div>
-          <span class="beat-txt">1&thinsp;HZ</span>
-        </div>
+      </div>
+
+      <!-- LED2 (A) and LED3 (B) — tomorrow indicators, centred below their display -->
+      <div class="tmrw-row">
+        <div class="t-led" id="led2"></div>
+        <span class="t-msg">&#8213; Lit if time is tomorrow &#8213;</span>
+        <div class="t-led" id="led3"></div>
       </div>
 
       <div class="hr-label">24 Hour Time</div>
@@ -371,7 +444,8 @@ body{
   <div class="bot-bar">
     <div class="brand">
       <div class="brand-name">LunaComp&#8209;1</div>
-      <div class="brand-sub">Digital Astro Computer &nbsp;|&nbsp; LC&#8209;01 &nbsp;|&nbsp; v2.7.4 Sim</div>
+      <div class="brand-sub">Digital Astro Computer &nbsp;|&nbsp; LC&#8209;01</div>
+      <div class="brand-lc">v2.7.4 &nbsp;·&nbsp; Simulator</div>
     </div>
 
     <div class="btns">
@@ -406,41 +480,62 @@ body{
     </div>
 
     <div class="luna-logo">
-      <svg width="52" height="36" viewBox="0 0 52 36">
-        <line x1="2"  y1="5"  x2="22" y2="5"  stroke="#7aaad8" stroke-width="1.8"/>
-        <line x1="2"  y1="11" x2="22" y2="11" stroke="#7aaad8" stroke-width="1.8"/>
-        <line x1="2"  y1="17" x2="22" y2="17" stroke="#7aaad8" stroke-width="1.8"/>
-        <line x1="2"  y1="23" x2="22" y2="23" stroke="#7aaad8" stroke-width="1.8"/>
-        <line x1="2"  y1="29" x2="22" y2="29" stroke="#7aaad8" stroke-width="1.8"/>
-        <circle cx="37" cy="17" r="13" fill="#7aaad8"/>
-        <circle cx="43" cy="12" r="11" fill="var(--navy)"/>
+      <!-- Lunarium logo: 4 rule-lines left + crescent right, matching panel silkscreen -->
+      <svg width="58" height="40" viewBox="0 0 58 40">
+        <line x1="2" y1="6"  x2="26" y2="6"  stroke="#7aaad8" stroke-width="2.6" stroke-linecap="round"/>
+        <line x1="2" y1="14" x2="26" y2="14" stroke="#7aaad8" stroke-width="2.6" stroke-linecap="round"/>
+        <line x1="2" y1="22" x2="26" y2="22" stroke="#7aaad8" stroke-width="2.6" stroke-linecap="round"/>
+        <line x1="2" y1="30" x2="26" y2="30" stroke="#7aaad8" stroke-width="2.6" stroke-linecap="round"/>
+        <!-- crescent: filled disc + navy overlay offset up-right -->
+        <circle cx="42" cy="19" r="14" fill="#7aaad8"/>
+        <circle cx="50" cy="13" r="12" fill="var(--navy-d)"/>
       </svg>
       <span class="luna-lbl">Lunarium</span>
     </div>
   </div>
 
-  <div class="stat-bar">
-    <div class="stat"><span class="stat-tag">Illumination</span><span class="stat-val amb" id="stIllum">--.-%</span></div>
-    <div class="stat"><span class="stat-tag">Moon Phase</span><span class="stat-val sm" id="stPhase">---</span></div>
-    <div class="stat"><span class="stat-tag">Moon Age</span><span class="stat-val blu" id="stAge">-- d</span></div>
-    <div class="stat"><span class="stat-tag">DST / TZ</span><span class="stat-val grn sm" id="stDST">---</span></div>
+  <!-- Diagnostic toggle bar -->
+  <div class="diag-toggle" id="diagToggle" onclick="toggleDiag()">
+    <span class="diag-toggle-lbl">Diagnostics</span>
+    <span class="diag-toggle-chevron open" id="diagChevron">&#9660;</span>
   </div>
 
-  <div class="ctrl-strip">
-    <div class="mode-sw">
-      <button class="mode-btn active" id="ctrlLive" onclick="setInputMode('live')">Live</button>
-      <button class="mode-btn"        id="ctrlMan"  onclick="setInputMode('manual')">Manual</button>
+  <!-- Collapsible diagnostic area -->
+  <div id="diagArea">
+    <div class="stat-bar">
+      <!-- Row 1 — phase data -->
+      <div class="stat"><span class="stat-tag">Moon Phase</span><span class="stat-val sm" id="stPhase">---</span></div>
+      <div class="stat"><span class="stat-tag">Illumination</span><span class="stat-val amb" id="stIllum">--.-%</span></div>
+      <div class="stat"><span class="stat-tag">Moon Age</span><span class="stat-val blu" id="stAge">-- d</span></div>
+      <div class="stat"><span class="stat-tag">DST / TZ</span><span class="stat-val grn sm" id="stDST">---</span></div>
+      <!-- Row 2 — position & rise/set -->
+      <div class="stat"><span class="stat-tag">Altitude</span><span class="stat-val" id="stAlt">---</span></div>
+      <div class="stat"><span class="stat-tag">Zodiac Sign</span><span class="stat-val sm" id="stZodiac">---</span></div>
+      <div class="stat"><span class="stat-tag">Next Moonrise</span><span class="stat-val grn sm" id="stRise">--:--</span></div>
+      <div class="stat"><span class="stat-tag">Next Moonset</span><span class="stat-val amb sm" id="stSet">--:--</span></div>
+      <!-- Row 3 — config & runtime -->
+      <div class="stat"><span class="stat-tag">Latitude</span><span class="stat-val blu sm" id="stLat">---</span></div>
+      <div class="stat"><span class="stat-tag">Longitude</span><span class="stat-val blu sm" id="stLon">---</span></div>
+      <div class="stat"><span class="stat-tag">Display Mode</span><span class="stat-val sm" id="stMode">---</span></div>
+      <div class="stat"><span class="stat-tag">Local Time</span><span class="stat-val" id="stLocal">--:--:--</span></div>
     </div>
-    <div class="live-ind" id="liveInd">
-      <div class="live-dot"></div>
-      <span class="live-txt">Real-time</span>
+
+    <div class="ctrl-strip">
+      <div class="mode-sw">
+        <button class="mode-btn active" id="ctrlLive" onclick="setInputMode('live')">Live</button>
+        <button class="mode-btn"        id="ctrlMan"  onclick="setInputMode('manual')">Manual</button>
+      </div>
+      <div class="live-ind" id="liveInd">
+        <div class="live-dot"></div>
+        <span class="live-txt">Real-time</span>
+      </div>
+      <div id="manCtrl" class="hidden" style="display:flex;align-items:center;gap:8px;">
+        <input type="datetime-local" class="dt-in" id="manDT">
+        <button class="apply-btn" onclick="applyManual()">Apply UTC</button>
+      </div>
+      <span class="kbd-hint">KEYS: A=alt &nbsp; S=set &nbsp; +=plus &nbsp; -=minus &nbsp; (hold S = long-press)</span>
     </div>
-    <div id="manCtrl" class="hidden" style="display:flex;align-items:center;gap:8px;">
-      <input type="datetime-local" class="dt-in" id="manDT">
-      <button class="apply-btn" onclick="applyManual()">Apply UTC</button>
-    </div>
-    <span class="kbd-hint">KEYS: A=alt &nbsp; S=set &nbsp; +=plus &nbsp; -=minus &nbsp; (hold S = long-press)</span>
-  </div>
+  </div><!-- /diagArea -->
 
 </div><!-- /enc -->
 
@@ -476,6 +571,7 @@ const MOON_ICONS=[
 ];
 
 const ZODIAC_LABELS=["ARIE","TAUR","GEN ","CANC","LEO ","VRGO","LIBR","SCOR","SAGI","CAPR","AQUA","PISC"];
+const ZODIAC_FULL=["Aries","Taurus","Gemini","Cancer","Leo","Virgo","Libra","Scorpio","Sagittarius","Capricorn","Aquarius","Pisces"];
 const AYANAMSA_DEG=24.0;
 const MOON_HORIZON_ALT=-0.8333;
 
@@ -656,9 +752,14 @@ function loadSettings(){
     const raw=localStorage.getItem(LS_KEY);
     if(!raw)return;
     const d=JSON.parse(raw);
-    userLatE4=d.latE4||399526; userLonE4=d.lonE4||-751652;
-    brightnessStep=Math.max(0,Math.min(10,d.brte||4));
-    tzBaseHours=Math.max(-12,Math.min(14,d.offs||-5));
+    // Reject anything that isn't a plain object
+    if(typeof d!=='object'||d===null||Array.isArray(d))return;
+    // Helper: accept only finite numbers, otherwise fall back to default
+    const safeNum=(v,def)=>(typeof v==='number'&&isFinite(v))?v:def;
+    userLatE4 =Math.max(-900000, Math.min( 900000,Math.trunc(safeNum(d.latE4, 399526))));
+    userLonE4 =Math.max(-1800000,Math.min(1800000,Math.trunc(safeNum(d.lonE4,-751652))));
+    brightnessStep=Math.max(0, Math.min(10,Math.trunc(safeNum(d.brte,4))));
+    tzBaseHours   =Math.max(-12,Math.min(14,Math.trunc(safeNum(d.offs,-5))));
     userLat=userLatE4/10000; userLon=userLonE4/10000;
   }catch(e){}
   applyBrightness();
@@ -849,7 +950,7 @@ const SET1=1,SET2=2,SET3=3,SET4=4;
 const MENU_CLOC=0,MENU_LOC=1,MENU_OFFS=2,MENU_BRTE=3,MENU_EXIT=4;
 const LOC_LAT_LABEL=0,LOC_LAT_EDIT=1,LOC_LON_LABEL=2,LOC_LON_EDIT=3;
 const CLK_YEAR=0,CLK_DATE=1,CLK_TIME=2;
-const EDIT_BLINK_MS=500,BEAT_PULSE_MS=60;
+const EDIT_BLINK_MS=500,BEAT_PULSE_MS=500;
 
 const S={
   mode:MODE_NORMAL, set:SET1,
@@ -904,7 +1005,11 @@ function setInputMode(m){
 }
 function applyManual(){
   const v=document.getElementById('manDT').value;
-  if(v){manualUtcMs=new Date(v+'Z').getTime();}
+  if(v){
+    const t=new Date(v+'Z').getTime();
+    // Only accept if Date produced a valid, finite timestamp
+    if(isFinite(t))manualUtcMs=t;
+  }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1224,7 +1329,7 @@ function uiTick(nowMs,utcMs,localMs,tzOff){
     if(acceptedPress('alt',nowMs)){
       S.set=(S.set===SET1)?SET2:(S.set===SET2)?SET3:(S.set===SET3)?SET4:SET1;
     }
-    if(nowMs-S.lastSet1ColonMs>=500){S.lastSet1ColonMs=nowMs;S.set1ColonOn=!S.set1ColonOn;}
+    S.set1ColonOn=(utcMs%1000)<500; // sync to UTC second — matches beat LED phase
     updateDisplaysNormal(nowMs,localMs,utcMs);
     renderMatrix(moonIconIdx);
     updateLedsNormal(nowMs,localMs);
@@ -1426,6 +1531,55 @@ function loop(){
   const dstOn=effOff!==tzBaseHours;
   const sign=effOff>=0?'+':'';
   document.getElementById('stDST').textContent=`UTC${sign}${effOff}${dstOn?' · DST':''}`;
+
+  // ── Extended diagnostic panels ────────────────────────
+  // Altitude + horizon status
+  {const as=S.moonAltDeg>=0?'+':'';
+   document.getElementById('stAlt').textContent=`${as}${S.moonAltDeg.toFixed(1)}°  ${S.moonUp?'▲ Above':'▽ Below'}`;}
+
+  // Zodiac sign (sidereal, computed each tick)
+  {const dz=dFromUtcMs(utcMs);
+   const{lon:zLon}=getMoonCoords(dz);
+   document.getElementById('stZodiac').textContent=ZODIAC_FULL[zodiacSign(zLon)];}
+
+  // Next moonrise
+  if(S.nextRiseValid){
+    const rd=new Date(S.nextRiseMs);
+    document.getElementById('stRise').textContent=
+      `${p2(rd.getUTCHours())}:${p2(rd.getUTCMinutes())}${S.nextRiseIsTomorrow?' +1d':''}`;
+  }else document.getElementById('stRise').textContent='None today';
+
+  // Next moonset
+  if(S.nextSetValid){
+    const sd=new Date(S.nextSetMs);
+    document.getElementById('stSet').textContent=
+      `${p2(sd.getUTCHours())}:${p2(sd.getUTCMinutes())}${S.nextSetIsTomorrow?' +1d':''}`;
+  }else document.getElementById('stSet').textContent='None today';
+
+  // Location
+  document.getElementById('stLat').textContent=`${userLat>=0?'+':''}${userLat.toFixed(4)}°`;
+  document.getElementById('stLon').textContent=`${userLon>=0?'+':''}${userLon.toFixed(4)}°`;
+
+  // Display mode
+  const MODE_NAMES=['','Time · Date','Rise · Set','Age · Illum','Alt · Zodiac'];
+  document.getElementById('stMode').textContent=
+    S.mode===MODE_NORMAL?(MODE_NAMES[S.set]||'---'):'Config';
+
+  // Local time
+  {const ld2=new Date(localMs);
+   document.getElementById('stLocal').textContent=
+     `${p2(ld2.getUTCHours())}:${p2(ld2.getUTCMinutes())}:${p2(ld2.getUTCSeconds())}`;}
+}
+
+// ═══════════════════════════════════════════════════════
+//  DIAGNOSTIC AREA TOGGLE
+// ═══════════════════════════════════════════════════════
+function toggleDiag(){
+  const area=document.getElementById('diagArea');
+  const chevron=document.getElementById('diagChevron');
+  const collapsed=area.classList.toggle('collapsed');
+  chevron.classList.toggle('open',!collapsed);
+  chevron.classList.toggle('closed',collapsed);
 }
 
 // ═══════════════════════════════════════════════════════
