@@ -17,7 +17,7 @@
            form-action 'self';
            frame-ancestors 'none';">
 <meta name="referrer" content="no-referrer">
-<title>Lunarium v2.7.4 · Simulator</title>
+<title>Lunarium v2.8.0 · Simulator</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700&display=swap');
 
@@ -445,7 +445,7 @@ body{
     <div class="brand">
       <div class="brand-name">LunaComp&#8209;1</div>
       <div class="brand-sub">Digital Astro Computer &nbsp;|&nbsp; LC&#8209;01</div>
-      <div class="brand-lc">v2.7.4 &nbsp;·&nbsp; Simulator</div>
+      <div class="brand-lc">v2.8.0 &nbsp;·&nbsp; Simulator</div>
     </div>
 
     <div class="btns">
@@ -726,26 +726,58 @@ function findMoonRiseSet(localNowMs,tzOff,lat,lon){
 
 // ═══════════════════════════════════════════════════════
 //  DST / TZ
+//  Four modes: DST_OFF · DST_US · DST_EU · DST_AU
+//  Offset stored as integer minutes; returned as fractional hours.
 // ═══════════════════════════════════════════════════════
-function nthSundayOfMonth(y,m,n){
+function nthSundayOfMonth(y,m,n){ // m is 1-indexed
   const d=new Date(Date.UTC(y,m-1,1));
   const dow=d.getUTCDay();
   return 1+((7-dow)%7)+(n-1)*7;
 }
+function lastSundayOfMonth(y,m){ // m is 1-indexed
+  const last=new Date(Date.UTC(y,m,0)).getUTCDate(); // day-0 trick: last day of month m
+  const dow =new Date(Date.UTC(y,m-1,last)).getUTCDay();
+  return last-dow; // step back to Sunday (0 if already Sunday)
+}
 function getLocalOffsetHours(utcMs){
-  const d=new Date(utcMs);
-  const y=d.getUTCFullYear();
-  const dstStartMs=Date.UTC(y,2,nthSundayOfMonth(y,3,2),7,0,0);
-  const dstEndMs  =Date.UTC(y,10,nthSundayOfMonth(y,11,1),6,0,0);
-  return tzBaseHours+((utcMs>=dstStartMs&&utcMs<dstEndMs)?1:0);
+  const baseH=tzBaseMin/60;
+  if(dstMode===DST_OFF)return baseH;
+  const y=new Date(utcMs).getUTCFullYear();
+  let dstStartMs,dstEndMs;
+
+  if(dstMode===DST_US){
+    // 2nd Sun Mar 02:00 local → 1st Sun Nov 02:00 local (post-spring offset)
+    // UTC = local - baseH (spring) ; UTC = local - (baseH+1) (fall, still DST)
+    dstStartMs=Date.UTC(y,2,nthSundayOfMonth(y,3,2)) +(2-baseH    )*3600000;
+    dstEndMs  =Date.UTC(y,10,nthSundayOfMonth(y,11,1))+(2-(baseH+1))*3600000;
+    return baseH+((utcMs>=dstStartMs&&utcMs<dstEndMs)?1:0);
+  }
+
+  if(dstMode===DST_EU){
+    // Last Sun Mar 01:00 UTC → Last Sun Oct 01:00 UTC  (fixed UTC, works for all EU zones)
+    dstStartMs=Date.UTC(y,2,lastSundayOfMonth(y,3), 1,0,0);
+    dstEndMs  =Date.UTC(y,9,lastSundayOfMonth(y,10),1,0,0);
+    return baseH+((utcMs>=dstStartMs&&utcMs<dstEndMs)?1:0);
+  }
+
+  if(dstMode===DST_AU){
+    // Southern hemisphere: 1st Sun Oct 02:00 local (spring) → 1st Sun Apr 03:00 local (fall)
+    // DST period wraps year boundary, so check: past Oct start OR before Apr end
+    dstStartMs=Date.UTC(y,9,nthSundayOfMonth(y,10,1))+(2-baseH    )*3600000;
+    dstEndMs  =Date.UTC(y,3,nthSundayOfMonth(y,4,1)) +(3-(baseH+1))*3600000;
+    return baseH+((utcMs>=dstStartMs||utcMs<dstEndMs)?1:0);
+  }
+
+  return baseH;
 }
 
 // ═══════════════════════════════════════════════════════
 //  EEPROM (localStorage)
 // ═══════════════════════════════════════════════════════
-const LS_KEY='lunarium_v274';
+const LS_KEY='lunarium_v280'; // bumped: offm/dstm replace offs schema
 let userLatE4=399526,userLonE4=-751652,userLat=39.9526,userLon=-75.1652;
-let brightnessStep=4,tzBaseHours=-5;
+let brightnessStep=4,tzBaseMin=-300,dstMode=1; // 1=DST_US default; literal used here because DST_* consts are defined later in the script
+// tzBaseMin: UTC offset stored in minutes (-720 = -12h, +840 = +14h), step 15 min
 
 function loadSettings(){
   try{
@@ -756,16 +788,20 @@ function loadSettings(){
     if(typeof d!=='object'||d===null||Array.isArray(d))return;
     // Helper: accept only finite numbers, otherwise fall back to default
     const safeNum=(v,def)=>(typeof v==='number'&&isFinite(v))?v:def;
-    userLatE4 =Math.max(-900000, Math.min( 900000,Math.trunc(safeNum(d.latE4, 399526))));
-    userLonE4 =Math.max(-1800000,Math.min(1800000,Math.trunc(safeNum(d.lonE4,-751652))));
-    brightnessStep=Math.max(0, Math.min(10,Math.trunc(safeNum(d.brte,4))));
-    tzBaseHours   =Math.max(-12,Math.min(14,Math.trunc(safeNum(d.offs,-5))));
+    userLatE4    =Math.max(-900000, Math.min( 900000,Math.trunc(safeNum(d.latE4,399526))));
+    userLonE4    =Math.max(-1800000,Math.min(1800000,Math.trunc(safeNum(d.lonE4,-751652))));
+    brightnessStep=Math.max(0,  Math.min(10, Math.trunc(safeNum(d.brte,4))));
+    // offm: offset in minutes, rounded to nearest 15; range -720…+840
+    tzBaseMin    =Math.round(Math.max(-720,Math.min(840,safeNum(d.offm,-300)))/15)*15;
+    dstMode      =Math.max(DST_OFF,Math.min(DST_AU,Math.trunc(safeNum(d.dstm,DST_US))));
     userLat=userLatE4/10000; userLon=userLonE4/10000;
   }catch(e){}
   applyBrightness();
 }
 function saveSettings(){
-  try{localStorage.setItem(LS_KEY,JSON.stringify({latE4:userLatE4,lonE4:userLonE4,brte:brightnessStep,offs:tzBaseHours}));}catch(e){}
+  try{localStorage.setItem(LS_KEY,JSON.stringify(
+    {latE4:userLatE4,lonE4:userLonE4,brte:brightnessStep,offm:tzBaseMin,dstm:dstMode}
+  ));}catch(e){}
 }
 
 // ═══════════════════════════════════════════════════════
@@ -876,13 +912,28 @@ function showAltitudeDeg(altDeg){
   tmSetSegs('A',segs); // tmSetSegs clears colon — correct for SET4
 }
 
-function showOffsValue(offs){
-  const neg=offs<0; const mag=neg?-offs:offs;
+function showOffsValue(offsetMin){
+  // offsetMin: integer minutes, e.g. -300 = -5h, 330 = +5:30, 345 = +5:45
+  const neg=offsetMin<0;
+  const mag=neg?-offsetMin:offsetMin;
+  const h=Math.floor(mag/60), m=mag%60;
   const segs=[GLY_BLANK,GLY_BLANK,GLY_BLANK,GLY_BLANK];
-  segs[0]=neg?SEG_MINUS:GLY_BLANK;
-  segs[1]=mag>=10?encDig(Math.floor(mag/10)):GLY_BLANK;
-  segs[2]=encDig(mag%10);
-  tmSetSegs('A',segs);
+  if(m===0){
+    // Whole-hour: [-][H][H][ ] — no colon (existing style)
+    segs[0]=neg?SEG_MINUS:GLY_BLANK;
+    segs[1]=h>=10?encDig(Math.floor(h/10)):GLY_BLANK;
+    segs[2]=encDig(h%10);
+    segs[3]=GLY_BLANK;
+    tmSetSegs('A',segs);
+  }else{
+    // Fractional: [-/H][H][:][M1][M2]
+    // For h>=10 (e.g. +12:45) the tens-of-hours uses pos 0, sign is implied positive
+    if(h>=10){segs[0]=encDig(Math.floor(h/10));segs[1]=encDig(h%10);}
+    else{segs[0]=neg?SEG_MINUS:GLY_BLANK;segs[1]=encDig(h);}
+    segs[2]=encDig(Math.floor(m/10));
+    segs[3]=encDig(m%10);
+    tmSetSegsColon('A',segs,true); // colon separates hours from minutes
+  }
 }
 
 function showZodiacSign(idx){
@@ -945,12 +996,16 @@ function renderMatrix(iconIdx){
 // ═══════════════════════════════════════════════════════
 //  STATE
 // ═══════════════════════════════════════════════════════
-const MODE_NORMAL=0,MODE_MENU=1,MODE_LOC=2,MODE_CLOC=3,MODE_BRTE=4,MODE_OFFS=5;
+const MODE_NORMAL=0,MODE_MENU=1,MODE_LOC=2,MODE_CLOC=3,MODE_BRTE=4,MODE_OFFS=5,MODE_DST=6;
 const SET1=1,SET2=2,SET3=3,SET4=4;
-const MENU_CLOC=0,MENU_LOC=1,MENU_OFFS=2,MENU_BRTE=3,MENU_EXIT=4;
+const MENU_CLOC=0,MENU_LOC=1,MENU_OFFS=2,MENU_BRTE=3,MENU_DST=4,MENU_EXIT=5;
 const LOC_LAT_LABEL=0,LOC_LAT_EDIT=1,LOC_LON_LABEL=2,LOC_LON_EDIT=3;
 const CLK_YEAR=0,CLK_DATE=1,CLK_TIME=2;
 const EDIT_BLINK_MS=500,BEAT_PULSE_MS=500;
+// DST rule modes
+const DST_OFF=0,DST_US=1,DST_EU=2,DST_AU=3;
+// Lowercase-d glyph (segments b,c,d,e,g = 0x5E) for "dSt" menu label
+const GLY_D_LC=0x5E;
 
 const S={
   mode:MODE_NORMAL, set:SET1,
@@ -975,8 +1030,10 @@ const S={
   dateField:0, timeField:0,
   // brTE
   brteBlink:false, lastBrteMs:0, editBrteStep:4,
-  // OFFS
-  offsBlink:false, lastOffsMs:0, editOffsHours:-5,
+  // OFFS  (value in minutes, 15-min steps)
+  offsBlink:false, lastOffsMs:0, editOffsMin:-300,
+  // DST mode selector
+  dstBlink:false, lastDstMs:0, editDstMode:DST_US,
   // beat
   beatLastSec:255, beatPulseStartMs:0,
   lastUiTickMs:0,
@@ -1133,6 +1190,7 @@ function renderMenu(nowMs){
   else if(S.menuItem===MENU_LOC) {tmShowNum('A',2,false,4,0);tmText('B',GLY_L,GLY_O,GLY_C,GLY_BLANK);}
   else if(S.menuItem===MENU_OFFS){tmShowNum('A',3,false,4,0);tmText('B',GLY_O,GLY_F,GLY_F,GLY_S);}
   else if(S.menuItem===MENU_BRTE){tmShowNum('A',4,false,4,0);tmText('B',GLY_B,GLY_R,GLY_T,GLY_E);}
+  else if(S.menuItem===MENU_DST) {tmShowNum('A',5,false,4,0);tmText('B',GLY_D_LC,GLY_S,GLY_T,GLY_BLANK);}
   else                            {tmShowNum('A',0,false,4,0);tmText('B',GLY_E,GLY_X,GLY_I,GLY_T);}
 }
 
@@ -1148,8 +1206,23 @@ function renderOffs(nowMs){
   if(nowMs-S.lastOffsMs>=EDIT_BLINK_MS){S.lastOffsMs=nowMs;S.offsBlink=!S.offsBlink;}
   setAllLeds(true,false,false,false);
   if(!S.offsBlink)tmClear('A');
-  else showOffsValue(S.editOffsHours);
+  else showOffsValue(S.editOffsMin); // value in minutes
   tmText('B',GLY_O,GLY_F,GLY_F,GLY_S);
+}
+
+function renderDst(nowMs){
+  if(nowMs-S.lastDstMs>=EDIT_BLINK_MS){S.lastDstMs=nowMs;S.dstBlink=!S.dstBlink;}
+  setAllLeds(false,true,false,false); // LED1 on — mirrors SET3 feel
+  if(!S.dstBlink)tmClear('A');
+  else tmShowNum('A',S.editDstMode,false,4,0);
+  // Display B: OFF_ · US__ · EU__ · AU__
+  const DST_LBLS=[
+    [GLY_O,GLY_F,GLY_F,GLY_BLANK],
+    [GLY_U,GLY_S,GLY_BLANK,GLY_BLANK],
+    [GLY_E,GLY_U,GLY_BLANK,GLY_BLANK],
+    [GLY_A,GLY_U,GLY_BLANK,GLY_BLANK],
+  ];
+  tmSetSegs('B',DST_LBLS[S.editDstMode]);
 }
 
 function renderLocLabel(nowMs,isLat){
@@ -1339,7 +1412,7 @@ function uiTick(nowMs,utcMs,localMs,tzOff){
   // ── MENU ─────────────────────────────────────────────
   if(S.mode===MODE_MENU){
     if(setLong){S.mode=MODE_NORMAL;S.set=SET1;clearAllLeds();return;}
-    if(acceptedPress('alt',nowMs))S.menuItem=(S.menuItem+1)%5;
+    if(acceptedPress('alt',nowMs))S.menuItem=(S.menuItem+1)%6;
     if(acceptedPress('set',nowMs)){
       if(S.menuItem===MENU_CLOC){
         S.mode=MODE_CLOC;
@@ -1357,13 +1430,18 @@ function uiTick(nowMs,utcMs,localMs,tzOff){
         S.requireSetRelease=true;resetLP('set');return;
       }
       if(S.menuItem===MENU_OFFS){
-        S.mode=MODE_OFFS;S.editOffsHours=tzBaseHours;
+        S.mode=MODE_OFFS;S.editOffsMin=tzBaseMin;
         S.offsBlink=false;S.lastOffsMs=nowMs;
         S.requireSetRelease=true;resetLP('set');return;
       }
       if(S.menuItem===MENU_BRTE){
         S.mode=MODE_BRTE;S.editBrteStep=brightnessStep;
         S.brteBlink=false;S.lastBrteMs=nowMs;
+        S.requireSetRelease=true;resetLP('set');return;
+      }
+      if(S.menuItem===MENU_DST){
+        S.mode=MODE_DST;S.editDstMode=dstMode;
+        S.dstBlink=false;S.lastDstMs=nowMs;
         S.requireSetRelease=true;resetLP('set');return;
       }
       // EXIT
@@ -1392,15 +1470,30 @@ function uiTick(nowMs,utcMs,localMs,tzOff){
   // ── OFFS ─────────────────────────────────────────────
   if(S.mode===MODE_OFFS){
     if(setLong){S.mode=MODE_MENU;S.menuItem=MENU_OFFS;S.menuBlink=false;S.lastMenuBlinkMs=nowMs;return;}
-    if(acceptedPress('plus',nowMs)){S.editOffsHours=(S.editOffsHours<14)?S.editOffsHours+1:-12;}
-    if(acceptedPress('minus',nowMs)){S.editOffsHours=(S.editOffsHours>-12)?S.editOffsHours-1:14;}
+    // 15-minute steps, wrapping at ±720/840 min (−12h / +14h)
+    if(acceptedPress('plus',nowMs)) {S.editOffsMin=(S.editOffsMin<840)?S.editOffsMin+15:-720;}
+    if(acceptedPress('minus',nowMs)){S.editOffsMin=(S.editOffsMin>-720)?S.editOffsMin-15:840;}
     if(acceptedPress('set',nowMs)){
-      tzBaseHours=S.editOffsHours;saveSettings();
+      tzBaseMin=S.editOffsMin;saveSettings();
       S.lastDayKey=-1;S.lastPhaseMs=0;
       S.mode=MODE_NORMAL;S.set=SET1;
       S.requireSetRelease=true;resetLP('set');clearAllLeds();return;
     }
     renderOffs(nowMs);renderMatrix(moonIconIdx);return;
+  }
+
+  // ── DST ──────────────────────────────────────────────
+  if(S.mode===MODE_DST){
+    if(setLong){S.mode=MODE_MENU;S.menuItem=MENU_DST;S.menuBlink=false;S.lastMenuBlinkMs=nowMs;return;}
+    if(acceptedPress('plus',nowMs)) {S.editDstMode=(S.editDstMode<DST_AU)?S.editDstMode+1:DST_OFF;}
+    if(acceptedPress('minus',nowMs)){S.editDstMode=(S.editDstMode>DST_OFF)?S.editDstMode-1:DST_AU;}
+    if(acceptedPress('set',nowMs)){
+      dstMode=S.editDstMode;saveSettings();
+      S.lastDayKey=-1;S.lastPhaseMs=0;
+      S.mode=MODE_NORMAL;S.set=SET1;
+      S.requireSetRelease=true;resetLP('set');clearAllLeds();return;
+    }
+    renderDst(nowMs);renderMatrix(moonIconIdx);return;
   }
 
   // ── LOC ──────────────────────────────────────────────
@@ -1528,9 +1621,16 @@ function loop(){
     document.getElementById('stAge').textContent=`${_dd}d ${String(_hh).padStart(2,'0')}h`;
   }
   const effOff=getLocalOffsetHours(utcMs);
-  const dstOn=effOff!==tzBaseHours;
-  const sign=effOff>=0?'+':'';
-  document.getElementById('stDST').textContent=`UTC${sign}${effOff}${dstOn?' · DST':''}`;
+  const dstOn=effOff!==(tzBaseMin/60);
+  // Format fractional offset nicely: 5.5 → "+5:30", -9.5 → "-9:30"
+  const fmtOff=h=>{
+    const s=h>=0?'+':''; const mag=Math.abs(h);
+    const hh=Math.floor(mag); const mm=Math.round((mag-hh)*60);
+    return s+(mm?`${hh}:${String(mm).padStart(2,'0')}`:String(hh));
+  };
+  const DST_NAMES=['Off','US','EU','AU'];
+  document.getElementById('stDST').textContent=
+    `UTC${fmtOff(effOff)}${dstOn?' · DST':''} [${DST_NAMES[dstMode]}]`;
 
   // ── Extended diagnostic panels ────────────────────────
   // Altitude + horizon status

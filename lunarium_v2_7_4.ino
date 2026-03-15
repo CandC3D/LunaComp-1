@@ -1,22 +1,26 @@
 /*
-  Lunarium v2.7.4 (Mega 2560 / Elegoo Mega)
+  Lunarium v2.8.0 (Mega 2560 / Elegoo Mega)
   ------------------------------------------------------------
-  v2.7.4 changes:
-  - RTC now stores UTC; local time is derived dynamically using a DST-aware offset
-  - US Eastern auto-DST: automatically switches between EST (UTC-5) and EDT (UTC-4)
-      DST start: 2nd Sunday in March at 07:00 UTC (2 AM EST -> 3 AM EDT)
-      DST end:   1st Sunday in November at 06:00 UTC (2 AM EDT -> 1 AM EST)
-  - CLOC editor sets UTC directly; dispB shows "UTC " during year-edit stage
-      NOTE: after flashing, run CLOC once and enter the current UTC time
-  - brTE: long-press cancel now restores the previously saved brightness level
-  - Pin 14: seconds-beat LED (60 ms pulse at each RTC second tick)
+  v2.8.0 changes:
+  - DST rule selector: new menu item "dSt" cycles OFF / US / EU / AU
+      OFF: no automatic DST adjustment (Asia, Africa, Russia, most of S. America)
+      US : 2nd Sun Mar → 1st Sun Nov at 02:00 local (US/Canada; offset-corrected)
+      EU : Last Sun Mar → Last Sun Oct at 01:00 UTC (all EU/UK zones)
+      AU : 1st Sun Oct → 1st Sun Apr at 02:00/03:00 local (southern hemisphere)
+  - UTC offset now stored in minutes (15-min steps, -720..+840) replacing integer hours
+      Supports India +5:30, Nepal +5:45, Iran +3:30, Marquesas -9:30, Chatham +12:45, etc.
+  - OFFS display: whole hours shown as before; fractional hours use TM1637 colon (e.g. 5:30)
+  - Fixed pre-existing bug: US DST spring/fall UTC transition times were hardcoded to
+      UTC-5 only; now correctly derived from the user's stored offset for any US timezone
+  - Simulator: beat LED and colon flash synchronised (both 500 ms, locked to UTC second)
 
-  Retained from v2.7.3:
+  Retained from v2.7.4:
+  - RTC stores UTC; local time derived dynamically
+  - CLOC editor sets UTC directly
+  - brTE long-press cancel restores saved brightness
+  - Pin 14: seconds-beat LED
   - TM1637 colon mask = 0x40 for showNumberDecEx()
-  - LOC "SEt" interstitial ("Set Lat" / "Set Lon")
-  - % Illumination display: no zero padding
-  - LOC lat/lon retained across power loss (int32-safe)
-  - brTE brightness stored in EEPROM and applied to TM1637 + MAX7219
+  - LOC "SEt" interstitial, lat/lon EEPROM persistence
 */
 
 #include <Wire.h>
@@ -1028,7 +1032,7 @@ static void renderClockEditor(uint32_t nowMs) {
     if (!S.clkBlinkOn) dispA.clear();
     else dispA.showNumberDec(S.editYear, false, 4, 0);
 
-    // Remind user that CLOC edits UTC (RTC stores UTC in v2.7.4+)
+    // Remind user that CLOC edits UTC (RTC stores UTC in v2.7.4+, retained in v2.8.0)
     showText4(dispB, GLY_U, GLY_T, GLY_C, GLY_BLANK);
 
     updateMatrixMoonIcon();
@@ -1109,7 +1113,7 @@ void setup() {
 
   loadSettingsFromEeprom();
 
-  Serial.println("Lunarium v2.7.4 - UTC RTC, US Eastern auto-DST, brTE cancel fix");
+  Serial.println("Lunarium v2.8.0 - global DST modes (OFF/US/EU/AU), 15-min offset steps");
   Serial.print("Loaded LAT="); Serial.print(userLat, 4);
   Serial.print(" LON="); Serial.print(userLon, 4);
   Serial.print(" BRTE="); Serial.println((int)brightnessStep * 10);
